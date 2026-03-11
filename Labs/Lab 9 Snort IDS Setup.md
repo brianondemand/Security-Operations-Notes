@@ -256,7 +256,7 @@ sudo chmod +x /usr/local/bin/snort-block.sh
 Run:
 
 ```
-sudo /usr/local/bin/snort-block.sh
+sudo bash /usr/local/bin/snort-block.sh
 ```
 
 Now Kali will be automatically blocked after triggering an alert.
