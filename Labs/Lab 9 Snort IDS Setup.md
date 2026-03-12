@@ -307,7 +307,7 @@ sudo systemctl status snort
 Run the ip block script:
 
 ```
-sudo /usr/local/bin/snort-block.sh
+sudo bash /usr/local/bin/snort-block.sh
 ```
 
 Now Kali will be automatically blocked after triggering an alert.
