@@ -97,6 +97,12 @@ snort -V
 
 If version information appears, installation was successful.
 
+To make UFW start automatically at boot on machine, run the following command:
+
+```
+sudo systemctl enable ufw
+```
+
 ---
 
 #### ⚙️ 3. Configuring Snort
@@ -112,6 +118,11 @@ sudo nano /etc/snort/snort.conf
 Find:
 
 ```
+sudo cat /etc/snort/snort.conf | grep "ipvar HOME_NET"
+```
+
+
+```
 ipvar HOME_NET any
 ```
 
@@ -123,7 +134,12 @@ ipvar HOME_NET 192.168.56.0/24
 
 ##### Ensure local rules are included
 
+
 Add this line if not present:
+
+```
+sudo cat /etc/snort/snort.conf | grep "$RULE_PATH/local.rules"
+```
 
 ```
 include $RULE_PATH/local.rules
@@ -142,17 +158,39 @@ sudo nano /etc/snort/rules/local.rules
 Add:
 
 ```snort
-# ICMP Ping Detection
-alert icmp any any -> $HOME_NET any \
-(msg:"ICMP Ping Detected"; sid:1000001; rev:1;)
+# ============================================================
+# MY SNORT RULESET
+# ============================================================
 
-# Nmap SYN Scan Detection
-alert tcp any any -> $HOME_NET any \
-(flags:S; threshold:type both, track by_src, count 20, seconds 60; \
-msg:"Possible Nmap SYN Scan"; sid:1000002; rev:1;)
+# ------------------------------------------------------------
+# [1] ICMP Ping Detection
+# SID: 1000001 | Rev: 1 | Protocol: ICMP
+# ------------------------------------------------------------
+alert icmp any any -> $HOME_NET any (
+    msg:"ICMP Ping Detected";
+    sid:1000001;
+    rev:1;
+)
+
+# ------------------------------------------------------------
+# [2] Nmap SYN Scan Detection
+# SID: 1000002 | Rev: 1 | Protocol: TCP
+# ------------------------------------------------------------
+alert tcp any any -> $HOME_NET any (
+    flags:S;
+    threshold:type both, track by_src, count 20, seconds 60;
+    msg:"Possible Nmap SYN Scan";
+    sid:1000002;
+    rev:1;
+)
 ```
 
 Save and exit.
+
+```
+sudo systemctl restart snort
+sudo systemctl status snort
+```
 
 ---
 
@@ -172,10 +210,16 @@ Snort successfully validated the configuration
 
 ## 5. Running Snort
 
-Run Snort in alert logging mode:
+Run Snort in alert logging mode. To make it log alerts to a file, run it like this:
 
 ```
 sudo snort -A fast -c /etc/snort/snort.conf -i enp0s3
+```
+
+Run in console so you can watch alerts immediately:
+
+```
+sudo snort -A console -q -c /etc/snort/snort.conf -i enp0s3
 ```
 
 Alerts will be written to:
@@ -253,7 +297,14 @@ Make executable:
 sudo chmod +x /usr/local/bin/snort-block.sh
 ```
 
-Run:
+Restart Snort:
+
+```
+sudo systemctl restart snort
+sudo systemctl status snort
+```
+
+Run the ip block script:
 
 ```
 sudo /usr/local/bin/snort-block.sh
@@ -265,7 +316,33 @@ Now Kali will be automatically blocked after triggering an alert.
 
 ## 8. Sending Snort Alerts to Email
 
-**Install Mail Tools**
+Next step is to make snort send the alerts to our Gmail Inbox.
+
+#### Gmail requires an **App Password**
+
+Google **does not allow normal passwords** for SMTP anymore.
+
+You must create one:
+
+1. Go to **Google Account Security**
+
+2. Enable **2-Step Verification**
+
+3. Open **App Passwords**
+
+4. Generate password for **Mail**
+
+5. Copy the **16-character password**
+
+Example:
+
+```
+abcd efgh ijkl mnop
+```
+
+Paste that password in `/etc/msmtprc`.
+
+#### Install Mail Tools
 
 ```
 sudo apt install msmtp msmtp-mta mailutils -y
@@ -293,8 +370,8 @@ logfile /var/log/msmtp.log
 account gmail
 host smtp.gmail.com
 port 587
-from yourname@gmail.com
-user yourname@gmail.com
+from myemail@gmail.com
+user myemail@gmail.com
 password YOUR_APP_PASSWORD
 
 account default : gmail
@@ -309,7 +386,7 @@ sudo chmod 600 /etc/msmtprc
 Test email:
 
 ```
-echo "Test Email" | mail -s "Snort Test" yourname@gmail.com
+echo "Snort email test" | msmtp myemail@gmail.com
 ```
 
 ---
@@ -324,18 +401,48 @@ Add:
 
 ```bash
 #!/bin/bash
-LOGFILE="/var/log/snort/alert"
-LASTSIZE=0
 
-while true; do
-    SIZE=$(stat -c%s "$LOGFILE")
-    if [ "$SIZE" -ne "$LASTSIZE" ]; then
-        ALERT=$(tail -n 5 $LOGFILE)
-        echo "$ALERT" | mail -s "Snort Alert Triggered" yourname@gmail.com
-        LASTSIZE=$SIZE
-    fi
-    sleep 10
+LOGFILE="/var/log/snort/alert"
+
+tail -Fn0 $LOGFILE | while read line
+do
+
+if echo "$line" | grep -q "\[**\]"; then
+
+TIME=$(echo $line | awk '{print $1}')
+ATTACK=$(echo $line | sed -n 's/.*] \(.*\) \[\*\*\].*/\1/p')
+
+read proto src arrow dst <<< $(tail -n1 $LOGFILE | grep '{' | awk '{print $3,$4,$5,$6}')
+
+SRCIP=$(echo $src | cut -d':' -f1)
+DSTIP=$(echo $dst | cut -d':' -f1)
+DSTPORT=$(echo $dst | cut -d':' -f2)
+
+MESSAGE="
+⚠️ SNORT IDS ALERT
+
+Time: $TIME
+Attack Type: $ATTACK
+Protocol: $proto
+
+Attacker IP: $SRCIP
+Target IP: $DSTIP
+Target Port: $DSTPORT
+
+This activity was detected by the Snort IDS system.
+
+Possible actions:
+- Investigate the attacker machine
+- Block the IP using firewall
+- Check system logs for compromise
+"
+
+echo "$MESSAGE" | mail -s "⚠️ Snort Intrusion Alert" myemail@gmail.com
+
+fi
+
 done
+
 ```
 
 Make executable:
